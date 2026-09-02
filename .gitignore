@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+jenkins_home/
+prometheus-data/
+grafana-data/
+evidence/private/
