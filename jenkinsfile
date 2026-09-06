@@ -20,14 +20,50 @@ pipeline {
     stage('Build') { steps {
       sh 'docker build --build-arg GIT_COMMIT=$REVISION -t $IMAGE_REPO:$REVISION .'
     }}
-    stage('Inspect') { steps {
-      sh 'docker image inspect $IMAGE_REPO:$REVISION --format "{{.Id}} {{index .Config.Labels \"org.opencontainers.image.revision\"}}" | tee evidence/ci-image-proof.txt'
+    stage('Inspect') {
+    steps {
+        sh '''
+            mkdir -p evidence
+
+            docker image inspect "${IMAGE_NAME}:${SHORT_SHA}" \
+                --format '{{.Id}} {{index .Config.Labels "org.opencontainers.image.revision"}}' \
+                | tee evidence/ci-image-proof.txt
+        '''
+    }
+}
+
     }}
-    stage('Smoke Test') { steps {
-      sh 'docker rm -f task-api-ci 2>/dev/null || true'
-      sh 'docker run -d --name task-api-ci -p 18000:8000 --memory=384m $IMAGE_REPO:$REVISION'
-      sh 'for i in $(seq 1 20); do curl -fsS http://127.0.0.1:18000/health/ready && exit 0; sleep 2; done; exit 1'
-      sh 'curl -fsS http://127.0.0.1:18000/version | tee evidence/ci-runtime-version.json'
+    stage('Smoke Test') {
+    steps {
+        sh 'docker rm -f task-api-ci || true'
+
+        sh '''
+            docker run -d \
+                --name task-api-ci \
+                --memory=384m \
+                "${IMAGE_NAME}:${SHORT_SHA}"
+        '''
+
+        sh '''
+            for attempt in $(seq 1 20); do
+                if docker exec task-api-ci python -c \
+                    "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')" \
+                    >/dev/null 2>&1
+                then
+                    echo "Smoke test passed"
+                    exit 0
+                fi
+
+                echo "Waiting for application: attempt ${attempt}/20"
+                sleep 2
+            done
+
+            echo "Smoke test failed"
+            docker logs task-api-ci
+            exit 1
+        '''
+    }
+}
     }}
   }
   post {
