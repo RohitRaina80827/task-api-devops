@@ -7,10 +7,16 @@ pipeline {
       sh 'git rev-parse HEAD > evidence/ci-git-commit.txt'
       script { env.REVISION = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim() }
     }}
-    stage('Test') { steps {
-      sh 'python3 -m venv .ci-venv && . .ci-venv/bin/activate && pip install -r requirements-dev.txt && pytest -q'
-    }}
-    stage('Lint') { steps { sh '. .ci-venv/bin/activate && ruff check app tests' }}
+    stage('Test') {
+    steps {
+        sh '''
+            python3 -m venv .ci-venv
+            . .ci-venv/bin/activate
+            python -m pip install -r requirements-dev.txt
+            PYTHONPATH=. python -m pytest -q
+        '''
+    }
+}    stage('Lint') { steps { sh '. .ci-venv/bin/activate && ruff check app tests' }}
     stage('Build') { steps {
       sh 'docker build --build-arg GIT_COMMIT=$REVISION -t $IMAGE_REPO:$REVISION .'
     }}
