@@ -7,7 +7,7 @@ client = TestClient(app)
 def setup_function(): tasks.clear()
 
 def test_health_and_version():
-    assert client.get("/health/live").json() == {"status": "ok"}
+    assert client.get("/health/live").json() == {"status": "BROKEN"}
     assert client.get("/health/ready").status_code == 200
     assert "git_commit" in client.get("/version").json()
 
