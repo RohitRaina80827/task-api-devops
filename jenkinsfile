@@ -1,72 +1,114 @@
 pipeline {
-  agent any
-  options { timestamps(); buildDiscarder(logRotator(numToKeepStr: '10')) }
-  environment { IMAGE_REPO = 'task-api' }
-  stages {
-    stage('Checkout Metadata') { steps {
-      sh 'git rev-parse HEAD > evidence/ci-git-commit.txt'
-      script { env.REVISION = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim() }
-    }}
-    stage('Test') {
-    steps {
-        sh '''
-            python3 -m venv .ci-venv
-            . .ci-venv/bin/activate
-            python -m pip install -r requirements-dev.txt
-            PYTHONPATH=. python -m pytest -q
-        '''
-    }}
-    stage('Lint') { steps { sh '. .ci-venv/bin/activate && ruff check app tests' }}
-    stage('Build') { steps {
-      sh 'docker build --build-arg GIT_COMMIT=$REVISION -t $IMAGE_REPO:$REVISION .'
-    }}
-    stage('Inspect') {
-    steps {
-        sh '''
-            mkdir -p evidence
+    agent any
 
-            docker image inspect "${IMAGE_NAME}:${SHORT_SHA}" \
-                --format '{{.Id}} {{index .Config.Labels "org.opencontainers.image.revision"}}' \
-                | tee evidence/ci-image-proof.txt
-        '''
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
     }
-}
 
-    }}
-    stage('Smoke Test') {
-    steps {
-        sh 'docker rm -f task-api-ci || true'
-
-        sh '''
-            docker run -d \
-                --name task-api-ci \
-                --memory=384m \
-                "${IMAGE_NAME}:${SHORT_SHA}"
-        '''
-
-        sh '''
-            for attempt in $(seq 1 20); do
-                if docker exec task-api-ci python -c \
-                    "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')" \
-                    >/dev/null 2>&1
-                then
-                    echo "Smoke test passed"
-                    exit 0
-                fi
-
-                echo "Waiting for application: attempt ${attempt}/20"
-                sleep 2
-            done
-
-            echo "Smoke test failed"
-            docker logs task-api-ci
-            exit 1
-        '''
+    environment {
+        IMAGE_REPO = 'task-api'
     }
-}
-    }}
-  }
-  post {
-    always { sh 'docker rm -f task-api-ci 2>/dev/null || true'; archiveArtifacts artifacts: 'evidence/ci-*', allowEmptyArchive: true }
-  }
+
+    stages {
+        stage('Checkout Metadata') {
+            steps {
+                sh '''
+                    mkdir -p evidence
+                    git rev-parse HEAD > evidence/ci-git-commit.txt
+                '''
+
+                script {
+                    env.REVISION = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh '''
+                    python3 -m venv .ci-venv
+                    . .ci-venv/bin/activate
+                    python -m pip install -r requirements-dev.txt
+                    PYTHONPATH=. python -m pytest -q
+                '''
+            }
+        }
+
+        stage('Lint') {
+            steps {
+                sh '''
+                    . .ci-venv/bin/activate
+                    ruff check app tests
+                '''
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh '''
+                    docker build \
+                        --build-arg GIT_COMMIT="$REVISION" \
+                        -t "$IMAGE_REPO:$REVISION" \
+                        .
+                '''
+            }
+        }
+
+        stage('Inspect') {
+            steps {
+                sh '''
+                    mkdir -p evidence
+
+                    docker image inspect "$IMAGE_REPO:$REVISION" \
+                        --format '{{.Id}} {{json .Config.Labels}}' \
+                        | tee evidence/ci-image-proof.txt
+                '''
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                sh '''
+                    docker rm -f task-api-ci 2>/dev/null || true
+
+                    docker run -d \
+                        --name task-api-ci \
+                        --memory=384m \
+                        "$IMAGE_REPO:$REVISION"
+                '''
+
+                sh '''
+                    for attempt in $(seq 1 20); do
+                        if docker exec task-api-ci python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')" >/dev/null 2>&1
+                        then
+                            echo "Smoke test passed"
+                            exit 0
+                        fi
+
+                        echo "Waiting for application: attempt ${attempt}/20"
+                        sleep 2
+                    done
+
+                    echo "Smoke test failed"
+                    docker logs task-api-ci
+                    exit 1
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            sh 'docker rm -f task-api-ci 2>/dev/null || true'
+
+            archiveArtifacts(
+                artifacts: 'evidence/ci-*',
+                allowEmptyArchive: true
+            )
+        }
+    }
 }
